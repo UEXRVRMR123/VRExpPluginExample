@@ -6,6 +6,7 @@
 #include "Engine/SkinnedAsset.h"
 #include "HeadMountedDisplayFunctionLibrary.h"
 #include "PICO_HandTrackingFunctionLibrary.h"
+#include "UObject/UnrealType.h"
 
 int32 UVRExpPICOHandTrackingComponent::HandTrackingInstanceCount = 0;
 
@@ -28,6 +29,22 @@ UVRExpPICOHandTrackingComponent::UVRExpPICOHandTrackingComponent(const FObjectIn
 		BoneMappings.FindOrAdd(HandKeypoint);
 	}
 }
+
+void UVRExpPICOHandTrackingComponent::OnRegister()
+{
+	Super::OnRegister();
+
+	ApplyEffectiveMeshScale(1.0f);
+}
+
+#if WITH_EDITOR
+void UVRExpPICOHandTrackingComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	ApplyEffectiveMeshScale(1.0f);
+}
+#endif
 
 void UVRExpPICOHandTrackingComponent::BeginPlay()
 {
@@ -65,6 +82,11 @@ void UVRExpPICOHandTrackingComponent::TickComponent(float DeltaTime, ELevelTick 
 	bool bHidden = true;
 	if (bHandTrackingAvailable && GetSkinnedAsset())
 	{
+		if (!AutoScaleComponent)
+		{
+			ApplyEffectiveMeshScale(1.0f);
+		}
+
 		const EControllerHand ControllerHand = ToControllerHand(SkeletonMeshType);
 
 		FXRMotionControllerData Data;
@@ -75,7 +97,7 @@ void UVRExpPICOHandTrackingComponent::TickComponent(float DeltaTime, ELevelTick 
 			{
 				float Scale = 1.0f;
 				UHandTrackingFunctionLibraryPICO::GetHandTrackingMeshScalePICO(ControllerHand, Scale);
-				SetRelativeScale3D(FVector(Scale));
+				ApplyEffectiveMeshScale(Scale);
 			}
 
 			bHidden = !ApplyTrackedHandPose(Data.HandKeyPositions, Data.HandKeyRotations);
@@ -99,7 +121,7 @@ void UVRExpPICOHandTrackingComponent::TickComponent(float DeltaTime, ELevelTick 
 			{
 				if (AutoScaleComponent)
 				{
-					SetRelativeScale3D(FVector(Scale));
+					ApplyEffectiveMeshScale(Scale);
 				}
 
 				bHidden = !ApplyTrackedHandPose(OutPositions, OutRotations);
@@ -254,6 +276,28 @@ void UVRExpPICOHandTrackingComponent::BuildResolvedBoneMappings(int32 NumKeypoin
 	});
 }
 
+void UVRExpPICOHandTrackingComponent::ApplyEffectiveMeshScale(float PICOScale)
+{
+	FVector EffectiveScale = MirrorSettings.UnmirroredMeshScale * PICOScale;
+
+	if (MirrorSettings.bEnableMirror)
+	{
+		const bool bShouldMirror = MirrorSettings.bAutoMirrorByHandType
+			? MirrorSettings.SourceMeshHandType != SkeletonMeshType
+			: true;
+
+		if (bShouldMirror)
+		{
+			const FVector MirrorSign = GetMirrorAxisSign(MirrorSettings.MirrorAxis);
+			EffectiveScale.X *= MirrorSign.X;
+			EffectiveScale.Y *= MirrorSign.Y;
+			EffectiveScale.Z *= MirrorSign.Z;
+		}
+	}
+
+	SetRelativeScale3D(EffectiveScale);
+}
+
 FQuat UVRExpPICOHandTrackingComponent::ApplyComponentRotationAdjustment(const FQuat& RawRotation, const FVRExpPICORotationAdjustment& RotationAdjustment) const
 {
 	FQuat ResultRotation = RawRotation;
@@ -324,6 +368,21 @@ FVector UVRExpPICOHandTrackingComponent::GetAxisVector(EVRExpPICOHandBoneAxis Ax
 		return -FVector::UpVector;
 	default:
 		return FVector::ForwardVector;
+	}
+}
+
+FVector UVRExpPICOHandTrackingComponent::GetMirrorAxisSign(EVRExpPICOHandMirrorAxis MirrorAxis)
+{
+	switch (MirrorAxis)
+	{
+	case EVRExpPICOHandMirrorAxis::X:
+		return FVector(-1.0f, 1.0f, 1.0f);
+	case EVRExpPICOHandMirrorAxis::Y:
+		return FVector(1.0f, -1.0f, 1.0f);
+	case EVRExpPICOHandMirrorAxis::Z:
+		return FVector(1.0f, 1.0f, -1.0f);
+	default:
+		return FVector(1.0f, -1.0f, 1.0f);
 	}
 }
 
