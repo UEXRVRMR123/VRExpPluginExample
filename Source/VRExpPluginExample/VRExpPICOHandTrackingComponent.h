@@ -44,13 +44,37 @@ struct FVRExpPICOHandBoneAxisSettings
 };
 
 USTRUCT(BlueprintType)
+struct FVRExpPICORotationAdjustment
+{
+	GENERATED_BODY()
+
+	FVRExpPICORotationAdjustment()
+		: bEnableRotationOffset(false)
+		, RotationOffset(FRotator::ZeroRotator)
+		, bEnableAxisAdjustment(false)
+	{
+	}
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PICO|HandTracking|Rotation")
+	bool bEnableRotationOffset;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PICO|HandTracking|Rotation", meta = (EditCondition = "bEnableRotationOffset"))
+	FRotator RotationOffset;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PICO|HandTracking|Rotation")
+	bool bEnableAxisAdjustment;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PICO|HandTracking|Rotation", meta = (EditCondition = "bEnableAxisAdjustment"))
+	FVRExpPICOHandBoneAxisSettings AxisSettings;
+};
+
+USTRUCT(BlueprintType)
 struct FVRExpPICOHandBoneMapping
 {
 	GENERATED_BODY()
 
 	FVRExpPICOHandBoneMapping()
 		: BoneName(NAME_None)
-		, bEnableAxisAdjustment(false)
 	{
 	}
 
@@ -58,10 +82,7 @@ struct FVRExpPICOHandBoneMapping
 	FName BoneName;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PICO|HandTracking")
-	bool bEnableAxisAdjustment;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PICO|HandTracking", meta = (EditCondition = "bEnableAxisAdjustment"))
-	FVRExpPICOHandBoneAxisSettings AxisSettings;
+	FVRExpPICORotationAdjustment RotationAdjustment;
 };
 
 UCLASS(Blueprintable, ClassGroup = (PICO), meta = (BlueprintSpawnableComponent, DisplayName = "VRExp PICO Hand Tracking Component"))
@@ -91,18 +112,29 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "PICO|HandTracking")
 	bool AutoScaleComponent;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PICO|HandTracking|Axis")
-	bool bEnablePerBoneAxisAdjustment;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PICO|HandTracking|Axis")
-	FVRExpPICOHandBoneAxisSettings ComponentAxisSettings;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PICO|HandTracking|Rotation")
+	FVRExpPICORotationAdjustment ComponentRotationAdjustment;
 
 private:
-	FQuat ApplyAxisCorrectionToRotation(const FVRExpPICOHandBoneMapping& BoneMapping, const FQuat& WorldRotation) const;
-	FQuat ApplyComponentAxisCorrectionToRotation(const FQuat& WorldRotation) const;
+	struct FResolvedBoneMapping
+	{
+		EHandKeypoint HandKeypoint;
+		FName BoneName;
+		int32 BoneIndex;
+		int32 ParentIndex;
+		FVRExpPICORotationAdjustment RotationAdjustment;
+	};
+
+	bool ApplyTrackedHandPose(const TArray<FVector>& WorldPositions, const TArray<FQuat>& WorldRotations);
+	void BuildResolvedBoneMappings(int32 NumKeypoints, TArray<FResolvedBoneMapping>& OutMappings) const;
+
+	FQuat ApplyComponentRotationAdjustment(const FQuat& RawRotation, const FVRExpPICORotationAdjustment& RotationAdjustment) const;
+	FQuat ApplyParentBoneRotationOffset(const FQuat& ParentBoneSpaceRotation, const FVRExpPICORotationAdjustment& RotationAdjustment) const;
+	FQuat ApplyAxisAdjustment(const FQuat& ComponentSpaceRotation, const FVRExpPICORotationAdjustment& RotationAdjustment) const;
 
 	static EControllerHand ToControllerHand(EVRExpPICOHandType HandType);
 	static FVector GetAxisVector(EVRExpPICOHandBoneAxis Axis);
+	static int32 GetHandKeypointIndex(EHandKeypoint HandKeypoint);
 	static bool TryBuildAxisCorrection(const FVRExpPICOHandBoneAxisSettings& AxisSettings, FQuat& OutAxisCorrection);
 
 	bool bHandTrackingAvailable;
