@@ -65,6 +65,9 @@ struct FVRExpPICOHandMirrorSettings
 		, bAutoMirrorByHandType(true)
 		, SourceMeshHandType(EVRExpPICOHandType::HandLeft)
 		, MirrorAxis(EVRExpPICOHandMirrorAxis::Y)
+		, bMirrorBonePose(true)
+		, PoseMirrorFlipAxis(EVRExpPICOHandMirrorAxis::Y)
+		, bApplyWristBoneTransformWhenMirrored(false)
 		, UnmirroredMeshScale(FVector::OneVector)
 	{
 	}
@@ -80,6 +83,15 @@ struct FVRExpPICOHandMirrorSettings
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PICO|HandTracking|Mirror", meta = (EditCondition = "bEnableMirror"))
 	EVRExpPICOHandMirrorAxis MirrorAxis;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PICO|HandTracking|Mirror", meta = (EditCondition = "bEnableMirror"))
+	bool bMirrorBonePose;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PICO|HandTracking|Mirror", meta = (EditCondition = "bEnableMirror"))
+	EVRExpPICOHandMirrorAxis PoseMirrorFlipAxis;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PICO|HandTracking|Mirror", meta = (EditCondition = "bEnableMirror"))
+	bool bApplyWristBoneTransformWhenMirrored;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PICO|HandTracking|Mirror")
 	FVector UnmirroredMeshScale;
@@ -178,12 +190,15 @@ private:
 	bool ApplyTrackedHandPose(const TArray<FVector>& WorldPositions, const TArray<FQuat>& WorldRotations);
 	void BuildResolvedBoneMappings(int32 NumKeypoints, TArray<FResolvedBoneMapping>& OutMappings) const;
 	void ApplyEffectiveMeshScale(float PICOScale);
+	bool ShouldMirrorForCurrentHand() const;
+	FTransform BuildPoseComponentTransform() const;
 
 	FQuat ApplyComponentRotationAdjustment(const FQuat& RawRotation, const FVRExpPICORotationAdjustment& RotationAdjustment) const;
 	FQuat ApplyParentBoneRotationOffset(const FQuat& ParentBoneSpaceRotation, const FVRExpPICORotationAdjustment& RotationAdjustment) const;
 	FQuat ApplyAxisAdjustment(const FQuat& ComponentSpaceRotation, const FVRExpPICORotationAdjustment& RotationAdjustment) const;
 
 	static EControllerHand ToControllerHand(EVRExpPICOHandType HandType);
+	static EAxis::Type ToEAxis(EVRExpPICOHandMirrorAxis Axis);
 	static FVector GetAxisVector(EVRExpPICOHandBoneAxis Axis);
 	static FVector GetMirrorAxisSign(EVRExpPICOHandMirrorAxis MirrorAxis);
 	static int32 GetHandKeypointIndex(EHandKeypoint HandKeypoint);
