@@ -11,6 +11,7 @@ class AVRPlayerController;
 class UGripMotionControllerComponent;
 class UParentRelativeAttachmentComponent;
 class UReplicatedVRCameraComponent;
+class USkeletalMesh;
 class USkeletalMeshComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FVREPawnTeleportedSignature);
@@ -126,6 +127,15 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "VREPawn|VRGrip")
 	virtual void NotifyOfTeleport(bool bRegisterAsTeleport = true);
+
+	UFUNCTION(BlueprintPure, Category = "VREPawn|Components")
+	USkeletalMeshComponent* GetMesh() const
+	{
+		return Mesh;
+	}
+
+	UFUNCTION(BlueprintCallable, Category = "VREPawn|Components")
+	void SetPawnSkeletalMesh(USkeletalMesh* NewMesh);
 
 	UPROPERTY(Category = VREPawn, VisibleAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USceneComponent> NetSmoother;

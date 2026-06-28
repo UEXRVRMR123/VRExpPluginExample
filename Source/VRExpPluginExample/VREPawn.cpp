@@ -60,6 +60,7 @@ AVREPawn::AVREPawn(const FObjectInitializer& ObjectInitializer)
 	if (Mesh)
 	{
 		Mesh->SetupAttachment(ParentRelativeAttachment ? ParentRelativeAttachment : VRProxyComponent ? VRProxyComponent : NetSmoother);
+		Mesh->bEditableWhenInherited = true;
 		Mesh->AlwaysLoadOnClient = true;
 		Mesh->AlwaysLoadOnServer = true;
 		Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -154,6 +155,14 @@ void AVREPawn::OnRep_ReplicatedTeleportState()
 
 	LastProcessedTeleportSequence = ReplicatedTeleportState.TeleportSequence;
 	LastProcessedGripTeleportSequence = ReplicatedTeleportState.GripTeleportSequence;
+}
+
+void AVREPawn::SetPawnSkeletalMesh(USkeletalMesh* NewMesh)
+{
+	if (Mesh)
+	{
+		Mesh->SetSkeletalMesh(NewMesh);
+	}
 }
 
 FVector AVREPawn::GetVRForwardVector() const
