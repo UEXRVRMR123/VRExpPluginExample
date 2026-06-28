@@ -4,14 +4,29 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerState.h"
 #include "VREPawn.generated.h"
 
+class AVRPlayerController;
 class UGripMotionControllerComponent;
 class UParentRelativeAttachmentComponent;
 class UReplicatedVRCameraComponent;
 class USkeletalMeshComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FVREPawnTeleportedSignature);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FVREPawnPlayerStateReplicatedSignature, const APlayerState*, NewPlayerState);
+
+USTRUCT(BlueprintType)
+struct FVREPawnReplicatedTeleportState
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	uint8 TeleportSequence = 0;
+
+	UPROPERTY()
+	uint8 GripTeleportSequence = 0;
+};
 
 UCLASS(Blueprintable, BlueprintType)
 class VREXPPLUGINEXAMPLE_API AVREPawn : public APawn
@@ -22,8 +37,15 @@ public:
 	AVREPawn(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
 	virtual void PostInitializeComponents() override;
+	virtual void PossessedBy(AController* NewController) override;
+	virtual void OnRep_Controller() override;
+	virtual void OnRep_PlayerState() override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual bool TeleportTo(const FVector& DestLocation, const FRotator& DestRotation, bool bIsATest = false, bool bNoCheck = false) override;
 	virtual FVector GetTargetLocation(AActor* RequestedBy) const override;
+
+	UPROPERTY(Transient, DuplicateTransient)
+	TObjectPtr<AVRPlayerController> OwningVRPlayerController;
 
 	// HMD (头戴显示器) and controller (控制器) tracking stays Pawn-relative (相对Pawn) for large-room VR (大空间VR).
 	UPROPERTY(Category = VREPawn, EditAnywhere, BlueprintReadOnly)
@@ -34,6 +56,18 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "VREPawn|VRMovement")
 	FVREPawnTeleportedSignature OnCharacterTeleported_Bind;
+
+	UPROPERTY(BlueprintAssignable, Category = "VREPawn|VRMovement")
+	FVREPawnTeleportedSignature OnCharacterNetworkCorrected_Bind;
+
+	UPROPERTY(BlueprintAssignable, Category = "VREPawn|VRMovement")
+	FVREPawnPlayerStateReplicatedSignature OnPlayerStateReplicated_Bind;
+
+	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedTeleportState)
+	FVREPawnReplicatedTeleportState ReplicatedTeleportState;
+
+	UFUNCTION()
+	void OnRep_ReplicatedTeleportState();
 
 	UPROPERTY(BlueprintReadOnly, Transient, Category = "VREPawn|VRLocations")
 	FTransform OffsetComponentToWorld;
@@ -70,7 +104,7 @@ public:
 	FVector GetVRHeadLocation() const;
 
 	UFUNCTION(BlueprintCallable, Category = "VREPawn|VRLocations")
-	void RegenerateOffsetComponentToWorld();
+	void RegenerateOffsetComponentToWorld(bool bUpdateBounds = true, bool bCalculatePureYaw = true);
 
 	UFUNCTION(BlueprintCallable, Category = "VREPawn|VRLocations")
 	FVector AddActorWorldRotationVR(FRotator DeltaRot, bool bUseYawOnly = true, bool bRotateAroundHead = true);
@@ -83,6 +117,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "VREPawn|VRLocations")
 	FVector SetActorLocationVR(FVector NewLoc, bool bTeleport, bool bSetHeadLocation = true);
+
+	UFUNCTION(BlueprintPure, Category = "VREPawn|VRLocations")
+	virtual FVector GetTargetHeightOffset();
 
 	UFUNCTION(BlueprintPure, Category = "VREPawn|VRGrip")
 	virtual FVector GetTeleportLocation(FVector OriginalLocation);
@@ -118,4 +155,11 @@ public:
 	static FName SmoothingSceneParentComponentName;
 	static FName VRProxyComponentName;
 	static FName MeshComponentName;
+
+private:
+	UPROPERTY(Transient)
+	uint8 LastProcessedTeleportSequence = 0;
+
+	UPROPERTY(Transient)
+	uint8 LastProcessedGripTeleportSequence = 0;
 };

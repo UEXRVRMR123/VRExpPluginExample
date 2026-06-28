@@ -5,9 +5,11 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "GripMotionControllerComponent.h"
 #include "IMotionController.h"
+#include "Net/UnrealNetwork.h"
 #include "ParentRelativeAttachmentComponent.h"
 #include "ReplicatedVRCameraComponent.h"
 #include "VRExpansionFunctionLibrary.h"
+#include "VRPlayerController.h"
 
 FName AVREPawn::LeftMotionControllerComponentName(TEXT("Left Grip Motion Controller"));
 FName AVREPawn::RightMotionControllerComponentName(TEXT("Right Grip Motion Controller"));
@@ -88,6 +90,31 @@ void AVREPawn::PostInitializeComponents()
 	RegenerateOffsetComponentToWorld();
 }
 
+void AVREPawn::PossessedBy(AController* NewController)
+{
+	Super::PossessedBy(NewController);
+	OwningVRPlayerController = Cast<AVRPlayerController>(Controller);
+}
+
+void AVREPawn::OnRep_Controller()
+{
+	Super::OnRep_Controller();
+	OwningVRPlayerController = Cast<AVRPlayerController>(Controller);
+}
+
+void AVREPawn::OnRep_PlayerState()
+{
+	OnPlayerStateReplicated_Bind.Broadcast(GetPlayerState());
+	Super::OnRep_PlayerState();
+}
+
+void AVREPawn::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AVREPawn, ReplicatedTeleportState);
+}
+
 bool AVREPawn::TeleportTo(const FVector& DestLocation, const FRotator& DestRotation, bool bIsATest, bool bNoCheck)
 {
 	const bool bTeleportSucceeded = Super::TeleportTo(DestLocation, DestRotation, bIsATest, bNoCheck);
@@ -104,6 +131,29 @@ bool AVREPawn::TeleportTo(const FVector& DestLocation, const FRotator& DestRotat
 FVector AVREPawn::GetTargetLocation(AActor* RequestedBy) const
 {
 	return GetVRLocation();
+}
+
+void AVREPawn::OnRep_ReplicatedTeleportState()
+{
+	if (!IsLocallyControlled())
+	{
+		if (ReplicatedTeleportState.TeleportSequence != LastProcessedTeleportSequence)
+		{
+			LastProcessedTeleportSequence = ReplicatedTeleportState.TeleportSequence;
+			LastProcessedGripTeleportSequence = ReplicatedTeleportState.GripTeleportSequence;
+			NotifyOfTeleport();
+			return;
+		}
+
+		if (ReplicatedTeleportState.GripTeleportSequence != LastProcessedGripTeleportSequence)
+		{
+			LastProcessedGripTeleportSequence = ReplicatedTeleportState.GripTeleportSequence;
+			NotifyOfTeleport(false);
+		}
+	}
+
+	LastProcessedTeleportSequence = ReplicatedTeleportState.TeleportSequence;
+	LastProcessedGripTeleportSequence = ReplicatedTeleportState.GripTeleportSequence;
 }
 
 FVector AVREPawn::GetVRForwardVector() const
@@ -143,7 +193,7 @@ FVector AVREPawn::GetVRHeadLocation() const
 	return VRReplicatedCamera ? VRReplicatedCamera->GetComponentLocation() : GetVRLocation();
 }
 
-void AVREPawn::RegenerateOffsetComponentToWorld()
+void AVREPawn::RegenerateOffsetComponentToWorld(bool, bool)
 {
 	OffsetComponentToWorld = NetSmoother ? NetSmoother->GetComponentTransform() : GetActorTransform();
 }
@@ -262,6 +312,11 @@ FVector AVREPawn::SetActorLocationVR(FVector NewLoc, bool bTeleport, bool bSetHe
 	return NewLocation - NewLoc;
 }
 
+FVector AVREPawn::GetTargetHeightOffset()
+{
+	return FVector::ZeroVector;
+}
+
 FVector AVREPawn::GetTeleportLocation(FVector OriginalLocation)
 {
 	return OriginalLocation;
@@ -269,6 +324,20 @@ FVector AVREPawn::GetTeleportLocation(FVector OriginalLocation)
 
 void AVREPawn::NotifyOfTeleport(bool bRegisterAsTeleport)
 {
+	if (GetNetMode() < ENetMode::NM_Client)
+	{
+		if (bRegisterAsTeleport)
+		{
+			++ReplicatedTeleportState.TeleportSequence;
+		}
+		else
+		{
+			++ReplicatedTeleportState.GripTeleportSequence;
+		}
+
+		ForceNetUpdate();
+	}
+
 	if (LeftMotionController)
 	{
 		LeftMotionController->bIsPostTeleport = true;
