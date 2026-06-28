@@ -161,7 +161,10 @@ bool UVRExpPICOHandTrackingComponent::ApplyTrackedHandPose(const TArray<FVector>
 
 	const FReferenceSkeleton& RefSkeleton = GetSkinnedAsset()->GetRefSkeleton();
 	const int32 NumBones = RefSkeleton.GetNum();
-	const FTransform ComponentWorldTransform = GetComponentTransform();
+	const bool bMirrorBonePose = ShouldMirrorForCurrentHand() && MirrorSettings.bMirrorBonePose;
+	const FTransform PoseComponentWorldTransform = BuildPoseComponentTransform();
+	const EAxis::Type PoseMirrorAxis = ToEAxis(MirrorSettings.MirrorAxis);
+	const EAxis::Type PoseMirrorFlipAxis = ToEAxis(MirrorSettings.PoseMirrorFlipAxis);
 	const TArray<FTransform>& CurrentComponentTransforms = GetComponentSpaceTransforms();
 
 	TArray<FTransform> RawComponentTransforms;
@@ -173,8 +176,14 @@ bool UVRExpPICOHandTrackingComponent::ApplyTrackedHandPose(const TArray<FVector>
 	{
 		const int32 KeypointIndex = GetHandKeypointIndex(ResolvedMapping.HandKeypoint);
 		const FTransform WorldTransform(WorldRotations[KeypointIndex].GetNormalized(), WorldPositions[KeypointIndex], FVector::OneVector);
-		FTransform ComponentTransform = WorldTransform.GetRelativeTransform(ComponentWorldTransform);
+		FTransform ComponentTransform = WorldTransform.GetRelativeTransform(PoseComponentWorldTransform);
 		ComponentTransform.NormalizeRotation();
+
+		if (bMirrorBonePose)
+		{
+			ComponentTransform.Mirror(PoseMirrorAxis, PoseMirrorFlipAxis);
+			ComponentTransform.NormalizeRotation();
+		}
 
 		RawComponentTransforms[ResolvedMapping.BoneIndex] = ComponentTransform;
 		bHasRawComponentTransform[ResolvedMapping.BoneIndex] = true;
@@ -220,6 +229,11 @@ bool UVRExpPICOHandTrackingComponent::ApplyTrackedHandPose(const TArray<FVector>
 
 		FTransform OutputComponentTransform = HierarchyComponentTransform;
 		OutputComponentTransform.SetRotation(ApplyAxisAdjustment(OutputComponentTransform.GetRotation(), ResolvedMapping.RotationAdjustment));
+
+		if (bMirrorBonePose && ResolvedMapping.HandKeypoint == EHandKeypoint::Wrist && !MirrorSettings.bApplyWristBoneTransformWhenMirrored)
+		{
+			continue;
+		}
 
 		SetBoneRotationByName(ResolvedMapping.BoneName, OutputComponentTransform.GetRotation().Rotator(), EBoneSpaces::ComponentSpace);
 		if (ResolvedMapping.HandKeypoint == EHandKeypoint::Wrist || ApplyLocationToEveryBone)
@@ -276,23 +290,37 @@ void UVRExpPICOHandTrackingComponent::BuildResolvedBoneMappings(int32 NumKeypoin
 	});
 }
 
+bool UVRExpPICOHandTrackingComponent::ShouldMirrorForCurrentHand() const
+{
+	if (!MirrorSettings.bEnableMirror)
+	{
+		return false;
+	}
+
+	return MirrorSettings.bAutoMirrorByHandType
+		? MirrorSettings.SourceMeshHandType != SkeletonMeshType
+		: true;
+}
+
+FTransform UVRExpPICOHandTrackingComponent::BuildPoseComponentTransform() const
+{
+	FTransform PoseComponentTransform = GetComponentTransform();
+	const FVector ComponentScale = PoseComponentTransform.GetScale3D();
+	PoseComponentTransform.SetScale3D(FVector(FMath::Abs(ComponentScale.X), FMath::Abs(ComponentScale.Y), FMath::Abs(ComponentScale.Z)));
+	PoseComponentTransform.NormalizeRotation();
+	return PoseComponentTransform;
+}
+
 void UVRExpPICOHandTrackingComponent::ApplyEffectiveMeshScale(float PICOScale)
 {
 	FVector EffectiveScale = MirrorSettings.UnmirroredMeshScale * PICOScale;
 
-	if (MirrorSettings.bEnableMirror)
+	if (ShouldMirrorForCurrentHand())
 	{
-		const bool bShouldMirror = MirrorSettings.bAutoMirrorByHandType
-			? MirrorSettings.SourceMeshHandType != SkeletonMeshType
-			: true;
-
-		if (bShouldMirror)
-		{
-			const FVector MirrorSign = GetMirrorAxisSign(MirrorSettings.MirrorAxis);
-			EffectiveScale.X *= MirrorSign.X;
-			EffectiveScale.Y *= MirrorSign.Y;
-			EffectiveScale.Z *= MirrorSign.Z;
-		}
+		const FVector MirrorSign = GetMirrorAxisSign(MirrorSettings.MirrorAxis);
+		EffectiveScale.X *= MirrorSign.X;
+		EffectiveScale.Y *= MirrorSign.Y;
+		EffectiveScale.Z *= MirrorSign.Z;
 	}
 
 	SetRelativeScale3D(EffectiveScale);
@@ -348,6 +376,21 @@ FQuat UVRExpPICOHandTrackingComponent::ApplyAxisAdjustment(const FQuat& Componen
 EControllerHand UVRExpPICOHandTrackingComponent::ToControllerHand(EVRExpPICOHandType HandType)
 {
 	return HandType == EVRExpPICOHandType::HandRight ? EControllerHand::Right : EControllerHand::Left;
+}
+
+EAxis::Type UVRExpPICOHandTrackingComponent::ToEAxis(EVRExpPICOHandMirrorAxis Axis)
+{
+	switch (Axis)
+	{
+	case EVRExpPICOHandMirrorAxis::X:
+		return EAxis::X;
+	case EVRExpPICOHandMirrorAxis::Y:
+		return EAxis::Y;
+	case EVRExpPICOHandMirrorAxis::Z:
+		return EAxis::Z;
+	default:
+		return EAxis::Y;
+	}
 }
 
 FVector UVRExpPICOHandTrackingComponent::GetAxisVector(EVRExpPICOHandBoneAxis Axis)
