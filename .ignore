@@ -1,0 +1,11 @@
+/.git
+/.vs
+/.vscode
+/Content
+/Intermediate
+/Saved
+/UE4ProjectRenamer
+/Plugins/AdvancedSessions/AdvancedSessions/Intermediate
+/Plugins/AdvancedSessions/AdvancedSteamSessions/Intermediate
+/Plugins/VRExpansionPlugin/OpenXRExpansionPlugin/Intermediate
+/Plugins/VRExpansionPlugin/VRExpansionPlugin/Intermediate
