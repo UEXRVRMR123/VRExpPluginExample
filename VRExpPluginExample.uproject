@@ -32,6 +32,15 @@
 			]
 		},
 		{
+			"Name": "VRExpansionExtensions",
+			"Enabled": true,
+			"SupportedTargetPlatforms": [
+				"Win64",
+				"Linux",
+				"Android"
+			]
+		},
+		{
 			"Name": "OnlineSubsystemSteam",
 			"Enabled": true
 		},
