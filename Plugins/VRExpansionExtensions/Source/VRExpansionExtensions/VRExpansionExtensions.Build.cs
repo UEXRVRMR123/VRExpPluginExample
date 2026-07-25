@@ -15,6 +15,8 @@ public class VRExpansionExtensions : ModuleRules
 			"Engine",
 			"InputCore",
 			"HeadMountedDisplay",
+			"DeveloperSettings",
+			"UMG",
 			"VRExpansionPlugin"
 		});
 

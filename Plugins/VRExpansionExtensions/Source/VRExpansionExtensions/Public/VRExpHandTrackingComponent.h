@@ -4,27 +4,14 @@
 
 #include "CoreMinimal.h"
 #include "Components/PoseableMeshComponent.h"
-#include "HeadMountedDisplayTypes.h"
+#include "VRExpHandTrackingTypes.h"
 #include "VRExpHandTrackingComponent.generated.h"
 
 #if WITH_EDITOR
 struct FPropertyChangedEvent;
 #endif
 
-UENUM(BlueprintType)
-enum class EVRExpHandType : uint8
-{
-	HandLeft,
-	HandRight,
-};
-
-UENUM(BlueprintType)
-enum class EVRExpHandGesture : uint8
-{
-	Pinch,
-	Fist,
-	OpenPalm,
-};
+class UVRExpHandTrackingSubsystem;
 
 UENUM(BlueprintType)
 enum class EVRExpHandMirrorAxis : uint8
@@ -44,34 +31,6 @@ enum class EVRExpHandBoneAxis : uint8
 	NegativeY UMETA(DisplayName = "-Y"),
 	NegativeZ UMETA(DisplayName = "-Z"),
 };
-
-USTRUCT(BlueprintType)
-struct FVRExpHandGestureAxisValues
-{
-	GENERATED_BODY()
-
-	FVRExpHandGestureAxisValues()
-		: PinchAxis(0.0f)
-		, FistAxis(0.0f)
-		, OpenPalmAxis(0.0f)
-		, bGestureDataValid(false)
-	{
-	}
-
-	UPROPERTY(BlueprintReadOnly, Category = "VRExp|HandTracking|Gesture")
-	float PinchAxis;
-
-	UPROPERTY(BlueprintReadOnly, Category = "VRExp|HandTracking|Gesture")
-	float FistAxis;
-
-	UPROPERTY(BlueprintReadOnly, Category = "VRExp|HandTracking|Gesture")
-	float OpenPalmAxis;
-
-	UPROPERTY(BlueprintReadOnly, Category = "VRExp|HandTracking|Gesture")
-	bool bGestureDataValid;
-};
-
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FVRExpHandGestureEvent, EVRExpHandGesture, Gesture, float, AxisValue);
 
 USTRUCT(BlueprintType)
 struct FVRExpHandBoneAxisSettings
@@ -198,6 +157,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "VRExp|HandTracking|Gesture")
 	FVRExpHandGestureAxisValues GetGestureAxisValues() const;
 
+	UFUNCTION(BlueprintPure, Category = "VRExp|HandTracking|PalmFacing")
+	float GetPalmFacingAxis(EVRExpHandTrackingSpace Space, EVRExpPalmFacingDirection Direction) const;
+
+	UFUNCTION(BlueprintPure, Category = "VRExp|HandTracking|PalmFacing")
+	FVRExpPalmFacingAxisValues GetPalmFacingAxisValues(EVRExpHandTrackingSpace Space) const;
+
+	UFUNCTION(BlueprintPure, Category = "VRExp|HandTracking|PalmFacing")
+	bool IsPalmFacingActive(EVRExpHandTrackingSpace Space, EVRExpPalmFacingDirection Direction) const;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "VRExp|HandTracking")
 	EVRExpHandType SkeletonMeshType;
 
@@ -221,6 +189,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VRExp|HandTracking|Gesture")
 	bool bEnableGestureRecognition;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VRExp|HandTracking|PalmFacing")
+	bool bEnablePalmFacingRecognition;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VRExp|HandTracking|Gesture", meta = (ClampMin = "0.0"))
 	float PinchClosedDistanceScale;
@@ -252,7 +223,34 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "VRExp|HandTracking|Gesture")
 	FVRExpHandGestureEvent OnGestureAxisChanged;
 
+	UPROPERTY(BlueprintAssignable, Category = "VRExp|HandTracking|PalmFacing")
+	FVRExpPalmFacingEvent OnPalmFacingStarted;
+
+	UPROPERTY(BlueprintAssignable, Category = "VRExp|HandTracking|PalmFacing")
+	FVRExpPalmFacingEvent OnPalmFacingEnded;
+
+	UPROPERTY(BlueprintAssignable, Category = "VRExp|HandTracking|PalmFacing")
+	FVRExpPalmFacingEvent OnPalmFacingAxisChanged;
+
 private:
+	UFUNCTION()
+	void HandleSubsystemGestureStarted(EVRExpHandType HandType, EVRExpHandGesture Gesture, float AxisValue);
+
+	UFUNCTION()
+	void HandleSubsystemGestureEnded(EVRExpHandType HandType, EVRExpHandGesture Gesture, float AxisValue);
+
+	UFUNCTION()
+	void HandleSubsystemGestureAxisChanged(EVRExpHandType HandType, EVRExpHandGesture Gesture, float AxisValue);
+
+	UFUNCTION()
+	void HandleSubsystemPalmFacingStarted(EVRExpHandType HandType, EVRExpHandTrackingSpace Space, EVRExpPalmFacingDirection Direction, float AxisValue);
+
+	UFUNCTION()
+	void HandleSubsystemPalmFacingEnded(EVRExpHandType HandType, EVRExpHandTrackingSpace Space, EVRExpPalmFacingDirection Direction, float AxisValue);
+
+	UFUNCTION()
+	void HandleSubsystemPalmFacingAxisChanged(EVRExpHandType HandType, EVRExpHandTrackingSpace Space, EVRExpPalmFacingDirection Direction, float AxisValue);
+
 	struct FResolvedBoneMapping
 	{
 		EHandKeypoint HandKeypoint;
@@ -262,25 +260,9 @@ private:
 		FVRExpHandRotationAdjustment RotationAdjustment;
 	};
 
-	struct FGestureFingerKeypoints
-	{
-		EHandKeypoint Metacarpal;
-		EHandKeypoint Proximal;
-		EHandKeypoint Tip;
-	};
-
-	void EvaluateRawHandGestures(const TArray<FVector>& WorldPositions, const TArray<FQuat>& WorldRotations);
-	void ResetGestureState();
-	bool BuildGestureLocalPositions(const TArray<FVector>& WorldPositions, TArray<FVector>& OutLocalPositions, float& OutPalmWidth) const;
-	FVRExpHandGestureAxisValues CalculateGestureAxisValues(const TArray<FVector>& GestureLocalPositions, float PalmWidth) const;
-	float CalculatePinchAxis(const TArray<FVector>& GestureLocalPositions, float PalmWidth) const;
-	float CalculateFistAxis(const TArray<FVector>& GestureLocalPositions) const;
-	float CalculateFingerCurlAxis(const TArray<FVector>& GestureLocalPositions, const FGestureFingerKeypoints& FingerKeypoints) const;
-	void ApplyGestureAxisValues(const FVRExpHandGestureAxisValues& NewAxisValues);
-	void UpdateGestureState(EVRExpHandGesture Gesture, float NewAxisValue);
-	bool IsGestureActive(EVRExpHandGesture Gesture) const;
-	void SetGestureActive(EVRExpHandGesture Gesture, bool bActive);
-
+	UVRExpHandTrackingSubsystem* GetHandTrackingSubsystem() const;
+	void BindHandTrackingSubsystemDelegates();
+	void UnbindHandTrackingSubsystemDelegates();
 	bool ApplyTrackedHandPose(const TArray<FVector>& WorldPositions, const TArray<FQuat>& WorldRotations);
 	void BuildResolvedBoneMappings(int32 NumKeypoints, TArray<FResolvedBoneMapping>& OutMappings) const;
 	void ApplyEffectiveMeshScale(float TrackingScale);
@@ -291,18 +273,10 @@ private:
 	FQuat ApplyParentBoneRotationOffset(const FQuat& ParentBoneSpaceRotation, const FVRExpHandRotationAdjustment& RotationAdjustment) const;
 	FQuat ApplyAxisAdjustment(const FQuat& ComponentSpaceRotation, const FVRExpHandRotationAdjustment& RotationAdjustment) const;
 
-	static EControllerHand ToControllerHand(EVRExpHandType HandType);
 	static EAxis::Type ToEAxis(EVRExpHandMirrorAxis Axis);
 	static FVector GetAxisVector(EVRExpHandBoneAxis Axis);
 	static FVector GetMirrorAxisSign(EVRExpHandMirrorAxis MirrorAxis);
 	static int32 GetHandKeypointIndex(EHandKeypoint HandKeypoint);
-	static bool TryGetKeypointPosition(const TArray<FVector>& Positions, EHandKeypoint HandKeypoint, FVector& OutPosition);
-	static float GetGestureAxisFromValues(const FVRExpHandGestureAxisValues& AxisValues, EVRExpHandGesture Gesture);
 	static bool TryBuildAxisCorrection(const FVRExpHandBoneAxisSettings& AxisSettings, FQuat& OutAxisCorrection);
-
-	FVRExpHandGestureAxisValues CurrentGestureAxisValues;
-	bool bPinchGestureActive;
-	bool bFistGestureActive;
-	bool bOpenPalmGestureActive;
 };
 

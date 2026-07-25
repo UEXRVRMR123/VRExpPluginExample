@@ -4,8 +4,9 @@
 
 #include "Engine/SkeletalMesh.h"
 #include "Engine/SkinnedAsset.h"
-#include "HeadMountedDisplayFunctionLibrary.h"
 #include "UObject/UnrealType.h"
+#include "VRExpHandTrackingFunctionLibrary.h"
+#include "VRExpHandTrackingSubsystem.h"
 
 UVRExpHandTrackingComponent::UVRExpHandTrackingComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -14,6 +15,7 @@ UVRExpHandTrackingComponent::UVRExpHandTrackingComponent(const FObjectInitialize
 	, AutoHide(false)
 	, AutoScaleComponent(false)
 	, bEnableGestureRecognition(true)
+	, bEnablePalmFacingRecognition(true)
 	, PinchClosedDistanceScale(0.25f)
 	, PinchOpenDistanceScale(0.85f)
 	, FingerClosedAngleDegrees(95.0f)
@@ -21,9 +23,6 @@ UVRExpHandTrackingComponent::UVRExpHandTrackingComponent(const FObjectInitialize
 	, GestureActiveThreshold(0.75f)
 	, GestureInactiveThreshold(0.35f)
 	, GestureAxisBroadcastDelta(0.02f)
-	, bPinchGestureActive(false)
-	, bFistGestureActive(false)
-	, bOpenPalmGestureActive(false)
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = true;
@@ -54,17 +53,83 @@ void UVRExpHandTrackingComponent::PostEditChangeProperty(FPropertyChangedEvent& 
 
 float UVRExpHandTrackingComponent::GetGestureAxis(EVRExpHandGesture Gesture) const
 {
-	return GetGestureAxisFromValues(CurrentGestureAxisValues, Gesture);
+	if (!bEnableGestureRecognition)
+	{
+		return 0.0f;
+	}
+
+	if (const UVRExpHandTrackingSubsystem* Subsystem = GetHandTrackingSubsystem())
+	{
+		return Subsystem->GetGestureAxis(SkeletonMeshType, Gesture);
+	}
+
+	return 0.0f;
 }
 
 FVRExpHandGestureAxisValues UVRExpHandTrackingComponent::GetGestureAxisValues() const
 {
-	return CurrentGestureAxisValues;
+	if (!bEnableGestureRecognition)
+	{
+		return FVRExpHandGestureAxisValues();
+	}
+
+	if (const UVRExpHandTrackingSubsystem* Subsystem = GetHandTrackingSubsystem())
+	{
+		return Subsystem->GetGestureAxisValues(SkeletonMeshType);
+	}
+
+	return FVRExpHandGestureAxisValues();
+}
+
+float UVRExpHandTrackingComponent::GetPalmFacingAxis(EVRExpHandTrackingSpace Space, EVRExpPalmFacingDirection Direction) const
+{
+	if (!bEnablePalmFacingRecognition)
+	{
+		return 0.0f;
+	}
+
+	if (const UVRExpHandTrackingSubsystem* Subsystem = GetHandTrackingSubsystem())
+	{
+		return Subsystem->GetPalmFacingAxis(SkeletonMeshType, Space, Direction);
+	}
+
+	return 0.0f;
+}
+
+FVRExpPalmFacingAxisValues UVRExpHandTrackingComponent::GetPalmFacingAxisValues(EVRExpHandTrackingSpace Space) const
+{
+	if (!bEnablePalmFacingRecognition)
+	{
+		return FVRExpPalmFacingAxisValues();
+	}
+
+	if (const UVRExpHandTrackingSubsystem* Subsystem = GetHandTrackingSubsystem())
+	{
+		return Subsystem->GetPalmFacingAxisValues(SkeletonMeshType, Space);
+	}
+
+	return FVRExpPalmFacingAxisValues();
+}
+
+bool UVRExpHandTrackingComponent::IsPalmFacingActive(EVRExpHandTrackingSpace Space, EVRExpPalmFacingDirection Direction) const
+{
+	if (!bEnablePalmFacingRecognition)
+	{
+		return false;
+	}
+
+	if (const UVRExpHandTrackingSubsystem* Subsystem = GetHandTrackingSubsystem())
+	{
+		return Subsystem->IsPalmFacingActive(SkeletonMeshType, Space, Direction);
+	}
+
+	return false;
 }
 
 void UVRExpHandTrackingComponent::BeginPlay()
 {
 	Super::BeginPlay();
+	BindHandTrackingSubsystemDelegates();
 
 	if (AutoHide)
 	{
@@ -74,6 +139,7 @@ void UVRExpHandTrackingComponent::BeginPlay()
 
 void UVRExpHandTrackingComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	UnbindHandTrackingSubsystemDelegates();
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -82,28 +148,17 @@ void UVRExpHandTrackingComponent::TickComponent(float DeltaTime, ELevelTick Tick
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	bool bHidden = true;
-	const EControllerHand ControllerHand = ToControllerHand(SkeletonMeshType);
 
-	FXRMotionControllerData Data;
-	UHeadMountedDisplayFunctionLibrary::GetMotionControllerData(nullptr, ControllerHand, Data);
-	const bool bHasValidHandData = Data.bValid && Data.DeviceVisualType == EXRVisualType::Hand;
-
-	if (bEnableGestureRecognition && bHasValidHandData)
-	{
-		EvaluateRawHandGestures(Data.HandKeyPositions, Data.HandKeyRotations);
-	}
-	else
-	{
-		ResetGestureState();
-	}
-
+	FVRExpTrackedHandState HandState;
+	const UVRExpHandTrackingSubsystem* Subsystem = GetHandTrackingSubsystem();
+	const bool bHasValidHandData = Subsystem != nullptr && Subsystem->GetTrackedHandState(SkeletonMeshType, HandState);
 	if (GetSkinnedAsset())
 	{
 		ApplyEffectiveMeshScale(1.0f);
 
 		if (bHasValidHandData)
 		{
-			bHidden = !ApplyTrackedHandPose(Data.HandKeyPositions, Data.HandKeyRotations);
+			bHidden = !ApplyTrackedHandPose(HandState.HandKeyPositions, HandState.HandKeyRotations);
 		}
 	}
 
@@ -113,260 +168,82 @@ void UVRExpHandTrackingComponent::TickComponent(float DeltaTime, ELevelTick Tick
 	}
 }
 
-void UVRExpHandTrackingComponent::EvaluateRawHandGestures(const TArray<FVector>& WorldPositions, const TArray<FQuat>& WorldRotations)
+void UVRExpHandTrackingComponent::HandleSubsystemGestureStarted(EVRExpHandType HandType, EVRExpHandGesture Gesture, float AxisValue)
 {
-	(void)WorldRotations;
-
-	if (!bEnableGestureRecognition)
+	if (HandType == SkeletonMeshType && bEnableGestureRecognition)
 	{
-		ResetGestureState();
-		return;
-	}
-
-	TArray<FVector> GestureLocalPositions;
-	float PalmWidth = 0.0f;
-	if (!BuildGestureLocalPositions(WorldPositions, GestureLocalPositions, PalmWidth))
-	{
-		ResetGestureState();
-		return;
-	}
-
-	ApplyGestureAxisValues(CalculateGestureAxisValues(GestureLocalPositions, PalmWidth));
-}
-
-void UVRExpHandTrackingComponent::ResetGestureState()
-{
-	ApplyGestureAxisValues(FVRExpHandGestureAxisValues());
-}
-
-bool UVRExpHandTrackingComponent::BuildGestureLocalPositions(const TArray<FVector>& WorldPositions, TArray<FVector>& OutLocalPositions, float& OutPalmWidth) const
-{
-	OutLocalPositions.Reset();
-	OutPalmWidth = 0.0f;
-
-	FVector WristPosition;
-	FVector IndexProximalPosition;
-	FVector MiddleProximalPosition;
-	FVector RingProximalPosition;
-	FVector LittleProximalPosition;
-	if (!TryGetKeypointPosition(WorldPositions, EHandKeypoint::Wrist, WristPosition)
-		|| !TryGetKeypointPosition(WorldPositions, EHandKeypoint::IndexProximal, IndexProximalPosition)
-		|| !TryGetKeypointPosition(WorldPositions, EHandKeypoint::MiddleProximal, MiddleProximalPosition)
-		|| !TryGetKeypointPosition(WorldPositions, EHandKeypoint::RingProximal, RingProximalPosition)
-		|| !TryGetKeypointPosition(WorldPositions, EHandKeypoint::LittleProximal, LittleProximalPosition))
-	{
-		return false;
-	}
-
-	const FVector FingerBaseCenter = (IndexProximalPosition + MiddleProximalPosition + RingProximalPosition + LittleProximalPosition) * 0.25f;
-	const FVector ForwardAxis = (FingerBaseCenter - WristPosition).GetSafeNormal();
-	const FVector AcrossPalmAxis = (LittleProximalPosition - IndexProximalPosition).GetSafeNormal();
-	if (ForwardAxis.IsNearlyZero() || AcrossPalmAxis.IsNearlyZero())
-	{
-		return false;
-	}
-
-	const FVector UpAxis = FVector::CrossProduct(ForwardAxis, AcrossPalmAxis).GetSafeNormal();
-	if (UpAxis.IsNearlyZero())
-	{
-		return false;
-	}
-
-	const FVector RightAxis = FVector::CrossProduct(UpAxis, ForwardAxis).GetSafeNormal();
-	if (RightAxis.IsNearlyZero())
-	{
-		return false;
-	}
-
-	FVector IndexMetacarpalPosition;
-	FVector LittleMetacarpalPosition;
-	if (TryGetKeypointPosition(WorldPositions, EHandKeypoint::IndexMetacarpal, IndexMetacarpalPosition)
-		&& TryGetKeypointPosition(WorldPositions, EHandKeypoint::LittleMetacarpal, LittleMetacarpalPosition))
-	{
-		OutPalmWidth = FVector::Distance(IndexMetacarpalPosition, LittleMetacarpalPosition);
-	}
-
-	if (OutPalmWidth <= KINDA_SMALL_NUMBER)
-	{
-		OutPalmWidth = FVector::Distance(IndexProximalPosition, LittleProximalPosition);
-	}
-
-	if (OutPalmWidth <= KINDA_SMALL_NUMBER)
-	{
-		return false;
-	}
-
-	OutLocalPositions.SetNum(WorldPositions.Num());
-	for (int32 PositionIndex = 0; PositionIndex < WorldPositions.Num(); ++PositionIndex)
-	{
-		const FVector WristRelativePosition = WorldPositions[PositionIndex] - WristPosition;
-		OutLocalPositions[PositionIndex] = FVector(
-			FVector::DotProduct(WristRelativePosition, ForwardAxis),
-			FVector::DotProduct(WristRelativePosition, RightAxis),
-			FVector::DotProduct(WristRelativePosition, UpAxis));
-	}
-
-	return true;
-}
-
-FVRExpHandGestureAxisValues UVRExpHandTrackingComponent::CalculateGestureAxisValues(const TArray<FVector>& GestureLocalPositions, float PalmWidth) const
-{
-	FVRExpHandGestureAxisValues AxisValues;
-	AxisValues.PinchAxis = CalculatePinchAxis(GestureLocalPositions, PalmWidth);
-	AxisValues.FistAxis = CalculateFistAxis(GestureLocalPositions);
-	AxisValues.OpenPalmAxis = 1.0f - AxisValues.FistAxis;
-	AxisValues.bGestureDataValid = true;
-	return AxisValues;
-}
-
-float UVRExpHandTrackingComponent::CalculatePinchAxis(const TArray<FVector>& GestureLocalPositions, float PalmWidth) const
-{
-	FVector ThumbTipPosition;
-	FVector IndexTipPosition;
-	if (PalmWidth <= KINDA_SMALL_NUMBER
-		|| !TryGetKeypointPosition(GestureLocalPositions, EHandKeypoint::ThumbTip, ThumbTipPosition)
-		|| !TryGetKeypointPosition(GestureLocalPositions, EHandKeypoint::IndexTip, IndexTipPosition))
-	{
-		return 0.0f;
-	}
-
-	const float ClosedDistance = FMath::Max(0.0f, PinchClosedDistanceScale) * PalmWidth;
-	const float OpenDistance = FMath::Max(ClosedDistance + KINDA_SMALL_NUMBER, FMath::Max(0.0f, PinchOpenDistanceScale) * PalmWidth);
-	const float TipDistance = FVector::Distance(ThumbTipPosition, IndexTipPosition);
-	const float DistanceAlpha = (TipDistance - ClosedDistance) / (OpenDistance - ClosedDistance);
-	return FMath::Clamp(1.0f - DistanceAlpha, 0.0f, 1.0f);
-}
-
-float UVRExpHandTrackingComponent::CalculateFistAxis(const TArray<FVector>& GestureLocalPositions) const
-{
-	const FGestureFingerKeypoints Fingers[] =
-	{
-		{ EHandKeypoint::IndexMetacarpal, EHandKeypoint::IndexProximal, EHandKeypoint::IndexTip },
-		{ EHandKeypoint::MiddleMetacarpal, EHandKeypoint::MiddleProximal, EHandKeypoint::MiddleTip },
-		{ EHandKeypoint::RingMetacarpal, EHandKeypoint::RingProximal, EHandKeypoint::RingTip },
-		{ EHandKeypoint::LittleMetacarpal, EHandKeypoint::LittleProximal, EHandKeypoint::LittleTip },
-	};
-
-	float TotalCurlAxis = 0.0f;
-	for (const FGestureFingerKeypoints& Finger : Fingers)
-	{
-		TotalCurlAxis += CalculateFingerCurlAxis(GestureLocalPositions, Finger);
-	}
-
-	return FMath::Clamp(TotalCurlAxis / UE_ARRAY_COUNT(Fingers), 0.0f, 1.0f);
-}
-
-float UVRExpHandTrackingComponent::CalculateFingerCurlAxis(const TArray<FVector>& GestureLocalPositions, const FGestureFingerKeypoints& FingerKeypoints) const
-{
-	FVector ProximalPosition;
-	FVector TipPosition;
-	if (!TryGetKeypointPosition(GestureLocalPositions, FingerKeypoints.Proximal, ProximalPosition)
-		|| !TryGetKeypointPosition(GestureLocalPositions, FingerKeypoints.Tip, TipPosition))
-	{
-		return 0.0f;
-	}
-
-	const FVector FingerDirection = (TipPosition - ProximalPosition).GetSafeNormal();
-	if (FingerDirection.IsNearlyZero())
-	{
-		return 0.0f;
-	}
-
-	const float DotForward = FMath::Clamp(FVector::DotProduct(FingerDirection, FVector::ForwardVector), -1.0f, 1.0f);
-	const float FingerAngleDegrees = FMath::RadiansToDegrees(FMath::Acos(DotForward));
-	const float OpenAngle = FMath::Clamp(FingerOpenAngleDegrees, 0.0f, 180.0f);
-	const float ClosedAngle = FMath::Clamp(FingerClosedAngleDegrees, 0.0f, 180.0f);
-	if (ClosedAngle <= OpenAngle + KINDA_SMALL_NUMBER)
-	{
-		return FingerAngleDegrees >= ClosedAngle ? 1.0f : 0.0f;
-	}
-
-	const float AngleAlpha = (FingerAngleDegrees - OpenAngle) / (ClosedAngle - OpenAngle);
-	return FMath::Clamp(AngleAlpha, 0.0f, 1.0f);
-}
-
-void UVRExpHandTrackingComponent::ApplyGestureAxisValues(const FVRExpHandGestureAxisValues& NewAxisValues)
-{
-	const FVRExpHandGestureAxisValues OldAxisValues = CurrentGestureAxisValues;
-
-	UpdateGestureState(EVRExpHandGesture::Pinch, NewAxisValues.PinchAxis);
-	UpdateGestureState(EVRExpHandGesture::Fist, NewAxisValues.FistAxis);
-	UpdateGestureState(EVRExpHandGesture::OpenPalm, NewAxisValues.OpenPalmAxis);
-
-	const float AxisBroadcastDelta = FMath::Max(0.0f, GestureAxisBroadcastDelta);
-	if (FMath::Abs(OldAxisValues.PinchAxis - NewAxisValues.PinchAxis) >= AxisBroadcastDelta || OldAxisValues.bGestureDataValid != NewAxisValues.bGestureDataValid)
-	{
-		OnGestureAxisChanged.Broadcast(EVRExpHandGesture::Pinch, NewAxisValues.PinchAxis);
-	}
-
-	if (FMath::Abs(OldAxisValues.FistAxis - NewAxisValues.FistAxis) >= AxisBroadcastDelta || OldAxisValues.bGestureDataValid != NewAxisValues.bGestureDataValid)
-	{
-		OnGestureAxisChanged.Broadcast(EVRExpHandGesture::Fist, NewAxisValues.FistAxis);
-	}
-
-	if (FMath::Abs(OldAxisValues.OpenPalmAxis - NewAxisValues.OpenPalmAxis) >= AxisBroadcastDelta || OldAxisValues.bGestureDataValid != NewAxisValues.bGestureDataValid)
-	{
-		OnGestureAxisChanged.Broadcast(EVRExpHandGesture::OpenPalm, NewAxisValues.OpenPalmAxis);
-	}
-
-	CurrentGestureAxisValues = NewAxisValues;
-}
-
-void UVRExpHandTrackingComponent::UpdateGestureState(EVRExpHandGesture Gesture, float NewAxisValue)
-{
-	const bool bWasActive = IsGestureActive(Gesture);
-	const float ActiveThreshold = FMath::Clamp(GestureActiveThreshold, 0.0f, 1.0f);
-	const float InactiveThreshold = FMath::Min(FMath::Clamp(GestureInactiveThreshold, 0.0f, 1.0f), ActiveThreshold);
-	const bool bShouldBeActive = bWasActive
-		? NewAxisValue > InactiveThreshold
-		: NewAxisValue >= ActiveThreshold;
-
-	if (bWasActive == bShouldBeActive)
-	{
-		return;
-	}
-
-	SetGestureActive(Gesture, bShouldBeActive);
-	if (bShouldBeActive)
-	{
-		OnGestureStarted.Broadcast(Gesture, NewAxisValue);
-	}
-	else
-	{
-		OnGestureEnded.Broadcast(Gesture, NewAxisValue);
+		OnGestureStarted.Broadcast(Gesture, AxisValue);
 	}
 }
 
-bool UVRExpHandTrackingComponent::IsGestureActive(EVRExpHandGesture Gesture) const
+void UVRExpHandTrackingComponent::HandleSubsystemGestureEnded(EVRExpHandType HandType, EVRExpHandGesture Gesture, float AxisValue)
 {
-	switch (Gesture)
+	if (HandType == SkeletonMeshType && bEnableGestureRecognition)
 	{
-	case EVRExpHandGesture::Pinch:
-		return bPinchGestureActive;
-	case EVRExpHandGesture::Fist:
-		return bFistGestureActive;
-	case EVRExpHandGesture::OpenPalm:
-		return bOpenPalmGestureActive;
-	default:
-		return false;
+		OnGestureEnded.Broadcast(Gesture, AxisValue);
 	}
 }
 
-void UVRExpHandTrackingComponent::SetGestureActive(EVRExpHandGesture Gesture, bool bActive)
+void UVRExpHandTrackingComponent::HandleSubsystemGestureAxisChanged(EVRExpHandType HandType, EVRExpHandGesture Gesture, float AxisValue)
 {
-	switch (Gesture)
+	if (HandType == SkeletonMeshType && bEnableGestureRecognition)
 	{
-	case EVRExpHandGesture::Pinch:
-		bPinchGestureActive = bActive;
-		break;
-	case EVRExpHandGesture::Fist:
-		bFistGestureActive = bActive;
-		break;
-	case EVRExpHandGesture::OpenPalm:
-		bOpenPalmGestureActive = bActive;
-		break;
-	default:
-		break;
+		OnGestureAxisChanged.Broadcast(Gesture, AxisValue);
+	}
+}
+
+void UVRExpHandTrackingComponent::HandleSubsystemPalmFacingStarted(EVRExpHandType HandType, EVRExpHandTrackingSpace Space, EVRExpPalmFacingDirection Direction, float AxisValue)
+{
+	if (HandType == SkeletonMeshType && bEnablePalmFacingRecognition)
+	{
+		OnPalmFacingStarted.Broadcast(Space, Direction, AxisValue);
+	}
+}
+
+void UVRExpHandTrackingComponent::HandleSubsystemPalmFacingEnded(EVRExpHandType HandType, EVRExpHandTrackingSpace Space, EVRExpPalmFacingDirection Direction, float AxisValue)
+{
+	if (HandType == SkeletonMeshType && bEnablePalmFacingRecognition)
+	{
+		OnPalmFacingEnded.Broadcast(Space, Direction, AxisValue);
+	}
+}
+
+void UVRExpHandTrackingComponent::HandleSubsystemPalmFacingAxisChanged(EVRExpHandType HandType, EVRExpHandTrackingSpace Space, EVRExpPalmFacingDirection Direction, float AxisValue)
+{
+	if (HandType == SkeletonMeshType && bEnablePalmFacingRecognition)
+	{
+		OnPalmFacingAxisChanged.Broadcast(Space, Direction, AxisValue);
+	}
+}
+
+UVRExpHandTrackingSubsystem* UVRExpHandTrackingComponent::GetHandTrackingSubsystem() const
+{
+	return UVRExpHandTrackingFunctionLibrary::GetHandTrackingSubsystem(this);
+}
+
+void UVRExpHandTrackingComponent::BindHandTrackingSubsystemDelegates()
+{
+	if (UVRExpHandTrackingSubsystem* Subsystem = GetHandTrackingSubsystem())
+	{
+		Subsystem->OnGestureStarted.AddUniqueDynamic(this, &UVRExpHandTrackingComponent::HandleSubsystemGestureStarted);
+		Subsystem->OnGestureEnded.AddUniqueDynamic(this, &UVRExpHandTrackingComponent::HandleSubsystemGestureEnded);
+		Subsystem->OnGestureAxisChanged.AddUniqueDynamic(this, &UVRExpHandTrackingComponent::HandleSubsystemGestureAxisChanged);
+		Subsystem->OnPalmFacingStarted.AddUniqueDynamic(this, &UVRExpHandTrackingComponent::HandleSubsystemPalmFacingStarted);
+		Subsystem->OnPalmFacingEnded.AddUniqueDynamic(this, &UVRExpHandTrackingComponent::HandleSubsystemPalmFacingEnded);
+		Subsystem->OnPalmFacingAxisChanged.AddUniqueDynamic(this, &UVRExpHandTrackingComponent::HandleSubsystemPalmFacingAxisChanged);
+	}
+}
+
+void UVRExpHandTrackingComponent::UnbindHandTrackingSubsystemDelegates()
+{
+	if (UVRExpHandTrackingSubsystem* Subsystem = GetHandTrackingSubsystem())
+	{
+		Subsystem->OnGestureStarted.RemoveAll(this);
+		Subsystem->OnGestureEnded.RemoveAll(this);
+		Subsystem->OnGestureAxisChanged.RemoveAll(this);
+		Subsystem->OnPalmFacingStarted.RemoveAll(this);
+		Subsystem->OnPalmFacingEnded.RemoveAll(this);
+		Subsystem->OnPalmFacingAxisChanged.RemoveAll(this);
 	}
 }
 
@@ -608,11 +485,6 @@ FQuat UVRExpHandTrackingComponent::ApplyAxisAdjustment(const FQuat& ComponentSpa
 	return (ComponentSpaceRotation * AxisCorrection).GetNormalized();
 }
 
-EControllerHand UVRExpHandTrackingComponent::ToControllerHand(EVRExpHandType HandType)
-{
-	return HandType == EVRExpHandType::HandRight ? EControllerHand::Right : EControllerHand::Left;
-}
-
 EAxis::Type UVRExpHandTrackingComponent::ToEAxis(EVRExpHandMirrorAxis Axis)
 {
 	switch (Axis)
@@ -667,33 +539,6 @@ FVector UVRExpHandTrackingComponent::GetMirrorAxisSign(EVRExpHandMirrorAxis Mirr
 int32 UVRExpHandTrackingComponent::GetHandKeypointIndex(EHandKeypoint HandKeypoint)
 {
 	return static_cast<int32>(static_cast<uint8>(HandKeypoint));
-}
-
-bool UVRExpHandTrackingComponent::TryGetKeypointPosition(const TArray<FVector>& Positions, EHandKeypoint HandKeypoint, FVector& OutPosition)
-{
-	const int32 KeypointIndex = GetHandKeypointIndex(HandKeypoint);
-	if (!Positions.IsValidIndex(KeypointIndex))
-	{
-		return false;
-	}
-
-	OutPosition = Positions[KeypointIndex];
-	return true;
-}
-
-float UVRExpHandTrackingComponent::GetGestureAxisFromValues(const FVRExpHandGestureAxisValues& AxisValues, EVRExpHandGesture Gesture)
-{
-	switch (Gesture)
-	{
-	case EVRExpHandGesture::Pinch:
-		return AxisValues.PinchAxis;
-	case EVRExpHandGesture::Fist:
-		return AxisValues.FistAxis;
-	case EVRExpHandGesture::OpenPalm:
-		return AxisValues.OpenPalmAxis;
-	default:
-		return 0.0f;
-	}
 }
 
 bool UVRExpHandTrackingComponent::TryBuildAxisCorrection(const FVRExpHandBoneAxisSettings& AxisSettings, FQuat& OutAxisCorrection)
