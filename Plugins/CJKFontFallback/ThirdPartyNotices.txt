@@ -1,0 +1,30 @@
+CJKFontFallback Third-Party Notices
+===================================
+
+This plugin redistributes unmodified font binaries from the projects below.
+
+Source Han Sans SC
+------------------
+Project: Source Han Sans
+Release: 2.005R
+File: SourceHanSansSC-Regular.otf
+Upstream release archive: 09_SourceHanSansSC.zip
+Upstream archive SHA-256: EF7364F7AC2564BE1AE9C1D74276DE2653FE38B73449070398C4FC0B7E032FF1
+Bundled file SHA-256: F1D8611151880C6C336AABEAC4640EF434FA13CBFBF1FFE82D0A71B2A5637256
+Source: https://github.com/adobe-fonts/source-han-sans/releases/tag/2.005R
+License: SIL Open Font License 1.1
+Bundled license: Resources/Licenses/SourceHanSans-OFL-1.1.txt
+
+Plangothic
+----------
+Project: Plangothic Project
+Release: V2.9.5795
+Files: PlangothicP1-Regular.ttf, PlangothicP2-Regular.ttf
+P1 SHA-256: 550B5D0775B15405946B18F4843DF439A51E69508D7E6778D94C1F7A53DC5AD6
+P2 SHA-256: 681933370ADFE0FC7253F77735275A82FEA09FE4F8ADBA907BDEB46C110DAF8F
+Source: https://github.com/Fitzgerald-Porthmouth-Koenigsegg/Plangothic_Project/releases/tag/V2.9.5795
+License: SIL Open Font License 1.1
+Bundled license: Resources/Licenses/Plangothic-OFL-1.1.txt
+
+The font binaries are not sold separately. See the bundled license files for
+the complete license terms and reserved font name requirements.

@@ -1,0 +1,6 @@
+Filename,Description
+DirectVideo_360_sphere, Sphere with normals facing inwards for use when displaying 360 video.
+DirectVideo_example_material, Example unlit material for rendering a standard mono video.
+DirectVideo_example_mediatexture, Example MediaTexture correctly set up for Direct Video
+DirectVideo_example_stereomaterial_lr, Example material to render left/right encoded 360 stereo content. Use this with the 360 sphere  and make sure the sphere is at 0:0:0 and it will offset the eye position correctly
+DirectVideo_example_stereomaterial_tb, Example material to render top/bottom encoded 360 stereo content. Use this with the 360 sphere and make sure the sphere is at 0:0:0 and it will offset the eye position correctly
