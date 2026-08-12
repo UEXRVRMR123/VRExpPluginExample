@@ -56,7 +56,7 @@ const FVRExpUIInfoPresentationSettings &GetPreviewSettings(
     }
 }
 
-FString GetPreviewSourceLabel(
+FString GetEditorPreviewManagerSourceLabel(
     EVRExpUIInfoEditorPreviewSource Source)
 {
     const UEnum *Enum =
@@ -628,7 +628,7 @@ bool FVRExpUIInfoEditorPreviewManager::ResolvePreview(
     Request.bHasViewTransform = bHasViewTransform;
     Request.ViewTransform = ViewTransform;
     OutSourceLabel =
-        GetPreviewSourceLabel(
+        GetEditorPreviewManagerSourceLabel(
             Logic->EditorPreviewSource);
     OutFailureStatus =
         EVRExpUIInfoEditorPreviewStatus::
