@@ -23,7 +23,7 @@
     },
     {
       "Name": "VRExpansionExtensionsEditor",
-      "Type": "Editor",
+      "Type": "UncookedOnly",
       "LoadingPhase": "PostEngineInit",
       "PlatformAllowList": [
         "Win64",

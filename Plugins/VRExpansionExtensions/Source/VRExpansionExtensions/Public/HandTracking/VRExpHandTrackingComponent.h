@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/PoseableMeshComponent.h"
-#include "HandTracking/VRExpHandTrackingTypes.h"
+#include "HandTracking/VRExpHandPoseTypes.h"
 #include "VRExpHandTrackingComponent.generated.h"
 
 #if WITH_EDITOR
@@ -12,127 +12,6 @@ struct FPropertyChangedEvent;
 #endif
 
 class UVRExpHandTrackingSubsystem;
-
-UENUM(BlueprintType)
-enum class EVRExpHandMirrorAxis : uint8
-{
-	X,
-	Y,
-	Z,
-};
-
-UENUM(BlueprintType)
-enum class EVRExpHandBoneAxis : uint8
-{
-	X,
-	Y,
-	Z,
-	NegativeX UMETA(DisplayName = "-X"),
-	NegativeY UMETA(DisplayName = "-Y"),
-	NegativeZ UMETA(DisplayName = "-Z"),
-};
-
-USTRUCT(BlueprintType)
-struct FVRExpHandBoneAxisSettings
-{
-	GENERATED_BODY()
-
-	FVRExpHandBoneAxisSettings()
-		: ForwardAxis(EVRExpHandBoneAxis::X)
-		, UpAxis(EVRExpHandBoneAxis::Z)
-	{
-	}
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VRExp|HandTracking|Axis")
-	EVRExpHandBoneAxis ForwardAxis;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VRExp|HandTracking|Axis")
-	EVRExpHandBoneAxis UpAxis;
-};
-
-USTRUCT(BlueprintType)
-struct FVRExpHandMirrorSettings
-{
-	GENERATED_BODY()
-
-	FVRExpHandMirrorSettings()
-		: bEnableMirror(false)
-		, bAutoMirrorByHandType(true)
-		, SourceMeshHandType(EVRExpHandType::HandLeft)
-		, MirrorAxis(EVRExpHandMirrorAxis::Y)
-		, bMirrorBonePose(true)
-		, PoseMirrorFlipAxis(EVRExpHandMirrorAxis::Y)
-		, bApplyWristBoneTransformWhenMirrored(false)
-		, UnmirroredMeshScale(FVector::OneVector)
-	{
-	}
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VRExp|HandTracking|Mirror")
-	bool bEnableMirror;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VRExp|HandTracking|Mirror", meta = (EditCondition = "bEnableMirror"))
-	bool bAutoMirrorByHandType;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VRExp|HandTracking|Mirror", meta = (EditCondition = "bEnableMirror"))
-	EVRExpHandType SourceMeshHandType;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VRExp|HandTracking|Mirror", meta = (EditCondition = "bEnableMirror"))
-	EVRExpHandMirrorAxis MirrorAxis;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VRExp|HandTracking|Mirror", meta = (EditCondition = "bEnableMirror"))
-	bool bMirrorBonePose;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VRExp|HandTracking|Mirror", meta = (EditCondition = "bEnableMirror"))
-	EVRExpHandMirrorAxis PoseMirrorFlipAxis;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VRExp|HandTracking|Mirror", meta = (EditCondition = "bEnableMirror"))
-	bool bApplyWristBoneTransformWhenMirrored;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VRExp|HandTracking|Mirror")
-	FVector UnmirroredMeshScale;
-};
-
-USTRUCT(BlueprintType)
-struct FVRExpHandRotationAdjustment
-{
-	GENERATED_BODY()
-
-	FVRExpHandRotationAdjustment()
-		: bEnableRotationOffset(false)
-		, RotationOffset(FRotator::ZeroRotator)
-		, bEnableAxisAdjustment(false)
-	{
-	}
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VRExp|HandTracking|Rotation")
-	bool bEnableRotationOffset;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VRExp|HandTracking|Rotation", meta = (EditCondition = "bEnableRotationOffset"))
-	FRotator RotationOffset;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VRExp|HandTracking|Rotation")
-	bool bEnableAxisAdjustment;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VRExp|HandTracking|Rotation", meta = (EditCondition = "bEnableAxisAdjustment"))
-	FVRExpHandBoneAxisSettings AxisSettings;
-};
-
-USTRUCT(BlueprintType)
-struct FVRExpHandBoneMapping
-{
-	GENERATED_BODY()
-
-	FVRExpHandBoneMapping()
-		: BoneName(NAME_None)
-	{
-	}
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VRExp|HandTracking")
-	FName BoneName;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VRExp|HandTracking")
-	FVRExpHandRotationAdjustment RotationAdjustment;
-};
 
 UCLASS(Blueprintable, ClassGroup = (VRExp), meta = (BlueprintSpawnableComponent, DisplayName = "VRExp Hand Tracking Component"))
 class VREXPANSIONEXTENSIONS_API UVRExpHandTrackingComponent : public UPoseableMeshComponent
@@ -251,32 +130,14 @@ private:
 	UFUNCTION()
 	void HandleSubsystemPalmFacingAxisChanged(EVRExpHandType HandType, EVRExpHandTrackingSpace Space, EVRExpPalmFacingDirection Direction, float AxisValue);
 
-	struct FResolvedBoneMapping
-	{
-		EHandKeypoint HandKeypoint;
-		FName BoneName;
-		int32 BoneIndex;
-		int32 ParentIndex;
-		FVRExpHandRotationAdjustment RotationAdjustment;
-	};
-
 	UVRExpHandTrackingSubsystem* GetHandTrackingSubsystem() const;
 	void BindHandTrackingSubsystemDelegates();
 	void UnbindHandTrackingSubsystemDelegates();
 	bool ApplyTrackedHandPose(const TArray<FVector>& WorldPositions, const TArray<FQuat>& WorldRotations);
-	void BuildResolvedBoneMappings(int32 NumKeypoints, TArray<FResolvedBoneMapping>& OutMappings) const;
+	void BuildResolvedBoneMappings(int32 NumKeypoints, TArray<FVRExpResolvedHandBoneMapping>& OutMappings) const;
 	void ApplyEffectiveMeshScale(float TrackingScale);
 	bool ShouldMirrorForCurrentHand() const;
 	FTransform BuildPoseComponentTransform() const;
 
-	FQuat ApplyComponentRotationAdjustment(const FQuat& RawRotation, const FVRExpHandRotationAdjustment& RotationAdjustment) const;
-	FQuat ApplyParentBoneRotationOffset(const FQuat& ParentBoneSpaceRotation, const FVRExpHandRotationAdjustment& RotationAdjustment) const;
-	FQuat ApplyAxisAdjustment(const FQuat& ComponentSpaceRotation, const FVRExpHandRotationAdjustment& RotationAdjustment) const;
-
-	static EAxis::Type ToEAxis(EVRExpHandMirrorAxis Axis);
-	static FVector GetAxisVector(EVRExpHandBoneAxis Axis);
-	static FVector GetMirrorAxisSign(EVRExpHandMirrorAxis MirrorAxis);
-	static int32 GetHandKeypointIndex(EHandKeypoint HandKeypoint);
-	static bool TryBuildAxisCorrection(const FVRExpHandBoneAxisSettings& AxisSettings, FQuat& OutAxisCorrection);
 };
 

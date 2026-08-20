@@ -13,6 +13,7 @@ public class VRExpansionExtensions : ModuleRules
 			"Core",
 			"CoreUObject",
 			"Engine",
+			"AnimGraphRuntime",
 			"InputCore",
 			"HeadMountedDisplay",
 			"DeveloperSettings",

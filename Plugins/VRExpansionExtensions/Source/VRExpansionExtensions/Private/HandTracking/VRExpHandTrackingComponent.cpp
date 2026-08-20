@@ -5,6 +5,7 @@
 #include "Engine/SkeletalMesh.h"
 #include "Engine/SkinnedAsset.h"
 #include "UObject/UnrealType.h"
+#include "HandTracking/VRExpHandPoseRuntimeUtils.h"
 #include "HandTracking/VRExpHandTrackingFunctionLibrary.h"
 #include "HandTracking/VRExpHandTrackingSubsystem.h"
 
@@ -254,7 +255,7 @@ bool UVRExpHandTrackingComponent::ApplyTrackedHandPose(const TArray<FVector>& Wo
 		return false;
 	}
 
-	const int32 WristKeypointIndex = GetHandKeypointIndex(EHandKeypoint::Wrist);
+	const int32 WristKeypointIndex = FVRExpHandPoseRuntimeUtils::GetHandKeypointIndex(EHandKeypoint::Wrist);
 	if (!WorldPositions.IsValidIndex(WristKeypointIndex) || !WorldRotations.IsValidIndex(WristKeypointIndex))
 	{
 		return false;
@@ -262,102 +263,59 @@ bool UVRExpHandTrackingComponent::ApplyTrackedHandPose(const TArray<FVector>& Wo
 
 	const FQuat WristWorldRotation = WorldRotations[WristKeypointIndex].GetNormalized();
 	SetWorldLocation(WorldPositions[WristKeypointIndex]);
-	SetWorldRotation(ApplyComponentRotationAdjustment(WristWorldRotation, ComponentRotationAdjustment));
+	SetWorldRotation(FVRExpHandPoseRuntimeUtils::ApplyComponentRotationAdjustment(WristWorldRotation, ComponentRotationAdjustment));
 
-	TArray<FResolvedBoneMapping> ResolvedMappings;
-	BuildResolvedBoneMappings(FMath::Min(WorldPositions.Num(), WorldRotations.Num()), ResolvedMappings);
+	const int32 NumKeypoints = FMath::Min(WorldPositions.Num(), WorldRotations.Num());
+	TArray<FVRExpResolvedHandBoneMapping> ResolvedMappings;
+	BuildResolvedBoneMappings(NumKeypoints, ResolvedMappings);
 	if (ResolvedMappings.Num() == 0)
 	{
 		return true;
 	}
 
-	const FReferenceSkeleton& RefSkeleton = GetSkinnedAsset()->GetRefSkeleton();
-	const int32 NumBones = RefSkeleton.GetNum();
 	const bool bMirrorBonePose = ShouldMirrorForCurrentHand() && MirrorSettings.bMirrorBonePose;
 	const FTransform PoseComponentWorldTransform = BuildPoseComponentTransform();
-	const EAxis::Type PoseMirrorAxis = ToEAxis(MirrorSettings.MirrorAxis);
-	const EAxis::Type PoseMirrorFlipAxis = ToEAxis(MirrorSettings.PoseMirrorFlipAxis);
 	const TArray<FTransform>& CurrentComponentTransforms = GetComponentSpaceTransforms();
 
-	TArray<FTransform> RawComponentTransforms;
-	RawComponentTransforms.SetNum(NumBones);
-	TArray<uint8> bHasRawComponentTransform;
-	bHasRawComponentTransform.Init(false, NumBones);
-
-	for (const FResolvedBoneMapping& ResolvedMapping : ResolvedMappings)
+	TArray<FTransform> WorldTransforms;
+	WorldTransforms.Reserve(NumKeypoints);
+	for (int32 KeypointIndex = 0; KeypointIndex < NumKeypoints; ++KeypointIndex)
 	{
-		const int32 KeypointIndex = GetHandKeypointIndex(ResolvedMapping.HandKeypoint);
-		const FTransform WorldTransform(WorldRotations[KeypointIndex].GetNormalized(), WorldPositions[KeypointIndex], FVector::OneVector);
-		FTransform ComponentTransform = WorldTransform.GetRelativeTransform(PoseComponentWorldTransform);
-		ComponentTransform.NormalizeRotation();
-
-		if (bMirrorBonePose)
-		{
-			ComponentTransform.Mirror(PoseMirrorAxis, PoseMirrorFlipAxis);
-			ComponentTransform.NormalizeRotation();
-		}
-
-		RawComponentTransforms[ResolvedMapping.BoneIndex] = ComponentTransform;
-		bHasRawComponentTransform[ResolvedMapping.BoneIndex] = true;
+		WorldTransforms.Emplace(WorldRotations[KeypointIndex].GetNormalized(), WorldPositions[KeypointIndex], FVector::OneVector);
 	}
 
-	TArray<FTransform> HierarchyComponentTransforms;
-	HierarchyComponentTransforms.SetNum(NumBones);
-	TArray<uint8> bHasHierarchyComponentTransform;
-	bHasHierarchyComponentTransform.Init(false, NumBones);
+	TArray<FVRExpSolvedHandBoneTransform> SolvedTransforms;
+	FVRExpHandPoseRuntimeUtils::SolveComponentSpacePose(
+		WorldTransforms,
+		PoseComponentWorldTransform,
+		CurrentComponentTransforms,
+		ResolvedMappings,
+		false,
+		bMirrorBonePose,
+		MirrorSettings.MirrorAxis,
+		MirrorSettings.PoseMirrorFlipAxis,
+		SolvedTransforms);
 
-	auto GetParentComponentTransform = [&CurrentComponentTransforms](int32 ParentIndex, const TArray<FTransform>& CandidateTransforms, const TArray<uint8>& bHasCandidateTransform)
+	const FReferenceSkeleton& RefSkeleton = GetSkinnedAsset()->GetRefSkeleton();
+	for (const FVRExpSolvedHandBoneTransform& SolvedTransform : SolvedTransforms)
 	{
-		if (ParentIndex != INDEX_NONE)
-		{
-			if (CandidateTransforms.IsValidIndex(ParentIndex) && bHasCandidateTransform.IsValidIndex(ParentIndex) && bHasCandidateTransform[ParentIndex])
-			{
-				return CandidateTransforms[ParentIndex];
-			}
-
-			if (CurrentComponentTransforms.IsValidIndex(ParentIndex))
-			{
-				return CurrentComponentTransforms[ParentIndex];
-			}
-		}
-
-		return FTransform::Identity;
-	};
-
-	for (const FResolvedBoneMapping& ResolvedMapping : ResolvedMappings)
-	{
-		const FTransform& RawComponentTransform = RawComponentTransforms[ResolvedMapping.BoneIndex];
-		const FTransform RawParentComponentTransform = GetParentComponentTransform(ResolvedMapping.ParentIndex, RawComponentTransforms, bHasRawComponentTransform);
-		FTransform ParentBoneSpaceTransform = RawComponentTransform.GetRelativeTransform(RawParentComponentTransform);
-		ParentBoneSpaceTransform.NormalizeRotation();
-		ParentBoneSpaceTransform.SetRotation(ApplyParentBoneRotationOffset(ParentBoneSpaceTransform.GetRotation(), ResolvedMapping.RotationAdjustment));
-
-		const FTransform AdjustedParentComponentTransform = GetParentComponentTransform(ResolvedMapping.ParentIndex, HierarchyComponentTransforms, bHasHierarchyComponentTransform);
-		FTransform HierarchyComponentTransform = ParentBoneSpaceTransform * AdjustedParentComponentTransform;
-		HierarchyComponentTransform.NormalizeRotation();
-
-		HierarchyComponentTransforms[ResolvedMapping.BoneIndex] = HierarchyComponentTransform;
-		bHasHierarchyComponentTransform[ResolvedMapping.BoneIndex] = true;
-
-		FTransform OutputComponentTransform = HierarchyComponentTransform;
-		OutputComponentTransform.SetRotation(ApplyAxisAdjustment(OutputComponentTransform.GetRotation(), ResolvedMapping.RotationAdjustment));
-
-		if (bMirrorBonePose && ResolvedMapping.HandKeypoint == EHandKeypoint::Wrist && !MirrorSettings.bApplyWristBoneTransformWhenMirrored)
+		if (bMirrorBonePose && SolvedTransform.HandKeypoint == EHandKeypoint::Wrist && !MirrorSettings.bApplyWristBoneTransformWhenMirrored)
 		{
 			continue;
 		}
 
-		SetBoneRotationByName(ResolvedMapping.BoneName, OutputComponentTransform.GetRotation().Rotator(), EBoneSpaces::ComponentSpace);
-		if (ResolvedMapping.HandKeypoint == EHandKeypoint::Wrist || ApplyLocationToEveryBone)
+		const FName BoneName = RefSkeleton.GetBoneName(SolvedTransform.BoneIndex);
+		SetBoneRotationByName(BoneName, SolvedTransform.ComponentTransform.GetRotation().Rotator(), EBoneSpaces::ComponentSpace);
+		if (SolvedTransform.HandKeypoint == EHandKeypoint::Wrist || ApplyLocationToEveryBone)
 		{
-			SetBoneLocationByName(ResolvedMapping.BoneName, OutputComponentTransform.GetLocation(), EBoneSpaces::ComponentSpace);
+			SetBoneLocationByName(BoneName, SolvedTransform.ComponentTransform.GetLocation(), EBoneSpaces::ComponentSpace);
 		}
 	}
 
 	return true;
 }
 
-void UVRExpHandTrackingComponent::BuildResolvedBoneMappings(int32 NumKeypoints, TArray<FResolvedBoneMapping>& OutMappings) const
+void UVRExpHandTrackingComponent::BuildResolvedBoneMappings(int32 NumKeypoints, TArray<FVRExpResolvedHandBoneMapping>& OutMappings) const
 {
 	OutMappings.Reset();
 
@@ -375,7 +333,7 @@ void UVRExpHandTrackingComponent::BuildResolvedBoneMappings(int32 NumKeypoints, 
 			continue;
 		}
 
-		const int32 KeypointIndex = GetHandKeypointIndex(MappingPair.Key);
+		const int32 KeypointIndex = FVRExpHandPoseRuntimeUtils::GetHandKeypointIndex(MappingPair.Key);
 		if (KeypointIndex < 0 || KeypointIndex >= NumKeypoints)
 		{
 			continue;
@@ -387,7 +345,7 @@ void UVRExpHandTrackingComponent::BuildResolvedBoneMappings(int32 NumKeypoints, 
 			continue;
 		}
 
-		FResolvedBoneMapping ResolvedMapping;
+		FVRExpResolvedHandBoneMapping ResolvedMapping;
 		ResolvedMapping.HandKeypoint = MappingPair.Key;
 		ResolvedMapping.BoneName = BoneMapping.BoneName;
 		ResolvedMapping.BoneIndex = BoneIndex;
@@ -396,7 +354,7 @@ void UVRExpHandTrackingComponent::BuildResolvedBoneMappings(int32 NumKeypoints, 
 		OutMappings.Add(ResolvedMapping);
 	}
 
-	OutMappings.Sort([](const FResolvedBoneMapping& A, const FResolvedBoneMapping& B)
+	OutMappings.Sort([](const FVRExpResolvedHandBoneMapping& A, const FVRExpResolvedHandBoneMapping& B)
 	{
 		return A.BoneIndex < B.BoneIndex;
 	});
@@ -404,14 +362,11 @@ void UVRExpHandTrackingComponent::BuildResolvedBoneMappings(int32 NumKeypoints, 
 
 bool UVRExpHandTrackingComponent::ShouldMirrorForCurrentHand() const
 {
-	if (!MirrorSettings.bEnableMirror)
-	{
-		return false;
-	}
-
-	return MirrorSettings.bAutoMirrorByHandType
-		? MirrorSettings.SourceMeshHandType != SkeletonMeshType
-		: true;
+	return FVRExpHandPoseRuntimeUtils::ShouldMirror(
+		SkeletonMeshType,
+		MirrorSettings.bEnableMirror,
+		MirrorSettings.bAutoMirrorByHandType,
+		MirrorSettings.SourceMeshHandType);
 }
 
 FTransform UVRExpHandTrackingComponent::BuildPoseComponentTransform() const
@@ -429,130 +384,12 @@ void UVRExpHandTrackingComponent::ApplyEffectiveMeshScale(float TrackingScale)
 
 	if (ShouldMirrorForCurrentHand())
 	{
-		const FVector MirrorSign = GetMirrorAxisSign(MirrorSettings.MirrorAxis);
+		const FVector MirrorSign = FVRExpHandPoseRuntimeUtils::GetMirrorAxisSign(MirrorSettings.MirrorAxis);
 		EffectiveScale.X *= MirrorSign.X;
 		EffectiveScale.Y *= MirrorSign.Y;
 		EffectiveScale.Z *= MirrorSign.Z;
 	}
 
 	SetRelativeScale3D(EffectiveScale);
-}
-
-FQuat UVRExpHandTrackingComponent::ApplyComponentRotationAdjustment(const FQuat& RawRotation, const FVRExpHandRotationAdjustment& RotationAdjustment) const
-{
-	FQuat ResultRotation = RawRotation;
-
-	if (RotationAdjustment.bEnableRotationOffset)
-	{
-		ResultRotation = (ResultRotation * RotationAdjustment.RotationOffset.Quaternion()).GetNormalized();
-	}
-
-	if (RotationAdjustment.bEnableAxisAdjustment)
-	{
-		FQuat AxisCorrection = FQuat::Identity;
-		if (TryBuildAxisCorrection(RotationAdjustment.AxisSettings, AxisCorrection))
-		{
-			ResultRotation = (ResultRotation * AxisCorrection).GetNormalized();
-		}
-	}
-
-	return ResultRotation;
-}
-
-FQuat UVRExpHandTrackingComponent::ApplyParentBoneRotationOffset(const FQuat& ParentBoneSpaceRotation, const FVRExpHandRotationAdjustment& RotationAdjustment) const
-{
-	if (!RotationAdjustment.bEnableRotationOffset)
-	{
-		return ParentBoneSpaceRotation;
-	}
-
-	return (RotationAdjustment.RotationOffset.Quaternion() * ParentBoneSpaceRotation).GetNormalized();
-}
-
-FQuat UVRExpHandTrackingComponent::ApplyAxisAdjustment(const FQuat& ComponentSpaceRotation, const FVRExpHandRotationAdjustment& RotationAdjustment) const
-{
-	if (!RotationAdjustment.bEnableAxisAdjustment)
-	{
-		return ComponentSpaceRotation;
-	}
-
-	FQuat AxisCorrection = FQuat::Identity;
-	if (!TryBuildAxisCorrection(RotationAdjustment.AxisSettings, AxisCorrection))
-	{
-		return ComponentSpaceRotation;
-	}
-
-	return (ComponentSpaceRotation * AxisCorrection).GetNormalized();
-}
-
-EAxis::Type UVRExpHandTrackingComponent::ToEAxis(EVRExpHandMirrorAxis Axis)
-{
-	switch (Axis)
-	{
-	case EVRExpHandMirrorAxis::X:
-		return EAxis::X;
-	case EVRExpHandMirrorAxis::Y:
-		return EAxis::Y;
-	case EVRExpHandMirrorAxis::Z:
-		return EAxis::Z;
-	default:
-		return EAxis::Y;
-	}
-}
-
-FVector UVRExpHandTrackingComponent::GetAxisVector(EVRExpHandBoneAxis Axis)
-{
-	switch (Axis)
-	{
-	case EVRExpHandBoneAxis::X:
-		return FVector::ForwardVector;
-	case EVRExpHandBoneAxis::Y:
-		return FVector::RightVector;
-	case EVRExpHandBoneAxis::Z:
-		return FVector::UpVector;
-	case EVRExpHandBoneAxis::NegativeX:
-		return -FVector::ForwardVector;
-	case EVRExpHandBoneAxis::NegativeY:
-		return -FVector::RightVector;
-	case EVRExpHandBoneAxis::NegativeZ:
-		return -FVector::UpVector;
-	default:
-		return FVector::ForwardVector;
-	}
-}
-
-FVector UVRExpHandTrackingComponent::GetMirrorAxisSign(EVRExpHandMirrorAxis MirrorAxis)
-{
-	switch (MirrorAxis)
-	{
-	case EVRExpHandMirrorAxis::X:
-		return FVector(-1.0f, 1.0f, 1.0f);
-	case EVRExpHandMirrorAxis::Y:
-		return FVector(1.0f, -1.0f, 1.0f);
-	case EVRExpHandMirrorAxis::Z:
-		return FVector(1.0f, 1.0f, -1.0f);
-	default:
-		return FVector(1.0f, -1.0f, 1.0f);
-	}
-}
-
-int32 UVRExpHandTrackingComponent::GetHandKeypointIndex(EHandKeypoint HandKeypoint)
-{
-	return static_cast<int32>(static_cast<uint8>(HandKeypoint));
-}
-
-bool UVRExpHandTrackingComponent::TryBuildAxisCorrection(const FVRExpHandBoneAxisSettings& AxisSettings, FQuat& OutAxisCorrection)
-{
-	const FVector ForwardVector = GetAxisVector(AxisSettings.ForwardAxis);
-	const FVector UpVector = GetAxisVector(AxisSettings.UpAxis);
-	if (FMath::Abs(FVector::DotProduct(ForwardVector, UpVector)) > 1.0f - KINDA_SMALL_NUMBER)
-	{
-		OutAxisCorrection = FQuat::Identity;
-		return false;
-	}
-
-	const FQuat BoneBasisRotation = FRotationMatrix::MakeFromXZ(ForwardVector, UpVector).ToQuat();
-	OutAxisCorrection = BoneBasisRotation.Inverse().GetNormalized();
-	return true;
 }
 

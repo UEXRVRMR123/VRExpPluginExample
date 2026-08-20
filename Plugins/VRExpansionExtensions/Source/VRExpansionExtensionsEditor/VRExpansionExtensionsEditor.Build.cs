@@ -10,6 +10,9 @@ public class VRExpansionExtensionsEditor : ModuleRules
 		{
 			"Core",
 			"CoreUObject",
+			"AnimGraph",
+			"AnimGraphRuntime",
+			"BlueprintGraph",
 			"DeveloperSettings",
 			"Engine",
 			"UnrealEd",
